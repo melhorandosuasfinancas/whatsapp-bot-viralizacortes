@@ -1,13 +1,12 @@
 require("dotenv").config();
 const express = require("express");
-const Groq = require("groq-sdk");
+const Anthropic = require("@anthropic-ai/sdk");
 const axios = require("axios");
 
 const app = express();
 app.use(express.json());
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const EVOLUTION_URL      = process.env.EVOLUTION_API_URL;
 const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || "viralizacortes";
 const EVOLUTION_KEY      = process.env.EVOLUTION_API_KEY;
@@ -16,7 +15,9 @@ const CHECKOUT = {
   starter: "https://viralizacortes.carrinho.app/one-checkout/ocmdf/36710557",
   pro:     "https://viralizacortes.carrinho.app/one-checkout/ocmdf/36710590",
   full:    "https://viralizacortes.carrinho.app/one-checkout/ocmdf/36711838",
+  agencia: "https://viralizacortes.carrinho.app/one-checkout/ocmdf/36711896",
 };
+const ACCESS_URL = "https://viralizacortes.com.br/entrar";
 
 // ─── Envio via Evolution API ─────────────────────────────────────────────────
 async function enviarMensagem(numero, texto) {
@@ -27,9 +28,7 @@ async function enviarMensagem(numero, texto) {
   );
 }
 
-function delay(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function normalizarNumero(raw) {
   if (!raw) return null;
@@ -39,162 +38,252 @@ function normalizarNumero(raw) {
   return n.length >= 12 ? n : null;
 }
 
-// ─── Geração de mensagens com IA ─────────────────────────────────────────────
-async function gerarMensagem(prompt) {
-  const res = await groq.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
-    max_tokens: 250,
-    temperature: 0.85,
-    messages: [{ role: "user", content: prompt }],
-  });
-  return res.choices[0].message.content.trim();
+function primeiroNome(nome) {
+  return (nome || "").split(" ")[0] || "amigo";
 }
 
-// ─── Sequências de mensagens ──────────────────────────────────────────────────
+// ─── Histórico de conversas (in-memory) ──────────────────────────────────────
+const conversas = new Map();
 
-// Sequência 1: usuário esgotou os créditos do trial (3 mensagens)
+function getHistorico(numero) {
+  if (!conversas.has(numero)) conversas.set(numero, []);
+  return conversas.get(numero);
+}
+
+// ─── Log de eventos ───────────────────────────────────────────────────────────
+const logEventos = [];
+function registrarEvento(tipo, numero, ok) {
+  logEventos.unshift({ tipo, numero, ok, at: new Date().toISOString() });
+  if (logEventos.length > 200) logEventos.pop();
+}
+
+// ─── System Prompt ────────────────────────────────────────────────────────────
+function systemPrompt() {
+  return `Você é a Mari, atendente virtual do Viraliza Cortes — plataforma que transforma vídeos do YouTube em cortes virais para TikTok, Reels e Shorts com IA.
+
+Sobre a plataforma:
+- Usuário cola link do YouTube → IA encontra os melhores momentos → gera clips 9:16 com legendas em PT-BR gravadas no vídeo
+- Tudo no navegador, sem instalar nada. 2 cortes grátis para testar, sem cartão de crédito.
+
+Planos:
+- Starter: R$29,90/mês → 55 cortes
+- Pro: R$49,90/mês → 80 cortes
+- Full: R$99,90/mês → 140 cortes
+- Agência: R$150/mês → 220 cortes
+- Todos com garantia de 7 dias sem risco
+
+Links:
+- Acesso/Cadastro: ${ACCESS_URL}
+- Starter: ${CHECKOUT.starter}
+- Pro: ${CHECKOUT.pro}
+- Full: ${CHECKOUT.full}
+- Agência: ${CHECKOUT.agencia}
+- Suporte: suporte@viralizacortes.com.br
+
+Seu estilo:
+- Tom caloroso, humano, animado — nunca robótico
+- Respostas curtas (máximo 4 linhas no WhatsApp)
+- Use emojis com moderação (1-2 por mensagem)
+- Sempre ofereça próximo passo concreto (link ou ação)
+- Nunca invente preços ou funcionalidades que não existem`;
+}
+
+// ─── IA para respostas conversacionais ───────────────────────────────────────
+async function responderComIA(numero, textoUsuario) {
+  const historico = getHistorico(numero);
+  historico.push({ role: "user", content: textoUsuario });
+  if (historico.length > 20) historico.splice(0, historico.length - 20);
+
+  const response = await anthropic.messages.create({
+    model: process.env.CLAUDE_MODEL || "claude-haiku-4-5-20251001",
+    max_tokens: 300,
+    system: systemPrompt(),
+    messages: historico,
+  });
+
+  const resposta = response.content[0].text.trim();
+  historico.push({ role: "assistant", content: resposta });
+  return resposta;
+}
+
+// ─── Mensagens de Lifecycle ───────────────────────────────────────────────────
+
+function msgBoasVindas(nome) {
+  const n = primeiroNome(nome);
+  return `Oi ${n}! 🚀\nBem-vindo ao *Viraliza Cortes*!\n\nSeu acesso começa AGORA — 2 cortes grátis pra testar.\n▶️ Acesse: ${ACCESS_URL}\n\nCola um link do YouTube e me conta o resultado! 💚`;
+}
+
+function msgTrialVencendo(nome) {
+  const n = primeiroNome(nome);
+  return `Oi ${n}! ⏰\nSeu trial vence amanhã!\n\nSe você tá gostando (e aposto que tá 😄), aqui sua opção pra continuar:\n\n🎯 *Starter*: R$29,90/mês → 55 cortes\n🎯 *Pro*: R$49,90/mês → 80 cortes\n🎯 *Full*: R$99,90/mês → 140 cortes\n\nAssina agora (garantia 7 dias): ${CHECKOUT.starter}\nDúvidas? É só me chamar! 💬`;
+}
+
+function msgPagamentoAprovado(nome, plano, dataRenovacao) {
+  const n = primeiroNome(nome);
+  const labels = { starter: "Starter", basico: "Starter", pro: "Pro", full: "Full", agencia: "Agência" };
+  const label = labels[plano] || "Pro";
+  const renovacao = dataRenovacao ? `\nRenova em: *${dataRenovacao}*` : "";
+  return `🎉 *${n}*, pagamento aprovado!\n\nSeu plano *${label}* tá ativo agora ✅\nAcesse: ${ACCESS_URL}${renovacao}\n\nBora criar cortes que explodem! 🚀\nMe chama qualquer coisa 💚`;
+}
+
+function msgPlanoVencendo(nome, dataRenovacao) {
+  const n = primeiroNome(nome);
+  return `Oi ${n}! 🔔\n\nSeu plano renova em *${dataRenovacao}*.\n\nQuer trocar de plano ou tem dúvida, é só me chamar! Tô aqui 💚\nVer planos: ${CHECKOUT.starter}`;
+}
+
+// ─── Endpoints de Lifecycle ───────────────────────────────────────────────────
+
+app.post("/disparar/boas-vindas", async (req, res) => {
+  const { phone, name } = req.body;
+  const numero = normalizarNumero(phone);
+  if (!numero) return res.status(400).json({ erro: "phone inválido" });
+  res.json({ ok: true });
+  setImmediate(async () => {
+    try {
+      await delay(2000);
+      await enviarMensagem(numero, msgBoasVindas(name));
+      registrarEvento("boas-vindas", numero, true);
+      console.log(`[boas-vindas] enviado para ${numero}`);
+    } catch (e) {
+      registrarEvento("boas-vindas", numero, false);
+      console.error("[boas-vindas] erro:", e.message);
+    }
+  });
+});
+
+app.post("/disparar/trial-vencendo", async (req, res) => {
+  const { phone, name } = req.body;
+  const numero = normalizarNumero(phone);
+  if (!numero) return res.status(400).json({ erro: "phone inválido" });
+  res.json({ ok: true });
+  setImmediate(async () => {
+    try {
+      await enviarMensagem(numero, msgTrialVencendo(name));
+      registrarEvento("trial-vencendo", numero, true);
+      console.log(`[trial-vencendo] enviado para ${numero}`);
+    } catch (e) {
+      registrarEvento("trial-vencendo", numero, false);
+      console.error("[trial-vencendo] erro:", e.message);
+    }
+  });
+});
+
+app.post("/disparar/pagamento-aprovado", async (req, res) => {
+  const { phone, name, plan, renewalDate } = req.body;
+  const numero = normalizarNumero(phone);
+  if (!numero) return res.status(400).json({ erro: "phone inválido" });
+  res.json({ ok: true });
+  setImmediate(async () => {
+    try {
+      await enviarMensagem(numero, msgPagamentoAprovado(name, plan, renewalDate));
+      registrarEvento("pagamento-aprovado", numero, true);
+      console.log(`[pagamento-aprovado] enviado para ${numero}`);
+    } catch (e) {
+      registrarEvento("pagamento-aprovado", numero, false);
+      console.error("[pagamento-aprovado] erro:", e.message);
+    }
+  });
+});
+
+app.post("/disparar/plano-vencendo", async (req, res) => {
+  const { phone, name, renewalDate } = req.body;
+  const numero = normalizarNumero(phone);
+  if (!numero) return res.status(400).json({ erro: "phone inválido" });
+  res.json({ ok: true });
+  setImmediate(async () => {
+    try {
+      await enviarMensagem(numero, msgPlanoVencendo(name, renewalDate));
+      registrarEvento("plano-vencendo", numero, true);
+      console.log(`[plano-vencendo] enviado para ${numero}`);
+    } catch (e) {
+      registrarEvento("plano-vencendo", numero, false);
+      console.error("[plano-vencendo] erro:", e.message);
+    }
+  });
+});
+
+// ─── Sequências IA (reengajamento) ───────────────────────────────────────────
+
+async function gerarMsgIA(prompt) {
+  const r = await anthropic.messages.create({
+    model: process.env.CLAUDE_MODEL || "claude-haiku-4-5-20251001",
+    max_tokens: 220, system: systemPrompt(),
+    messages: [{ role: "user", content: prompt }],
+  });
+  return r.content[0].text.trim();
+}
+
 async function sequenciaTrialEsgotado(numero, nome) {
-  const primeiro = (nome || "").split(" ")[0] || "oi";
-
-  const msg1 = await gerarMensagem(
-    `Você é uma atendente simpática da Viraliza Cortes (plataforma que transforma vídeos do YouTube em cortes virais para TikTok, Reels e Shorts).
-O cliente "${primeiro}" acabou de usar todos os seus 10 cortes grátis do trial.
-Escreva UMA mensagem curta de WhatsApp (máximo 4 linhas) reconhecendo que ele usou tudo, elogiando de forma natural e perguntando se quer continuar.
-Tom: humano, caloroso, sem pressão. Sem emojis exagerados. Nunca mencione preço ainda.
-Responda APENAS com o texto da mensagem.`
-  );
-
+  const n = primeiroNome(nome);
+  const msg1 = await gerarMsgIA(`Crie UMA mensagem (máx 4 linhas) para "${n}" que acabou de usar todos os 2 cortes grátis. Reconheça de forma natural, elogie e pergunte se quer continuar. Sem preço, sem pressão. Apenas o texto.`);
   await delay(1500);
   await enviarMensagem(numero, msg1);
-
-  // Mensagem 2 — 20 horas depois
   await delay(20 * 60 * 60 * 1000);
-
-  const msg2 = await gerarMensagem(
-    `Você é uma atendente da Viraliza Cortes.
-O cliente "${primeiro}" usou os créditos grátis mas ainda não assinou.
-Escreva UMA mensagem curta (máximo 3 linhas) criando senso de perda: enquanto ele está sem créditos, os concorrentes estão postando todo dia. Sem mencionar preço.
-Tom: humano, direto, sem drama. Responda APENAS com o texto.`
-  );
-
+  const msg2 = await gerarMsgIA(`Crie UMA mensagem (máx 3 linhas) para "${n}" que usou os créditos grátis mas não assinou. Crie senso de perda: concorrentes postam todo dia enquanto ele está parado. Sem preço. Apenas o texto.`);
   await enviarMensagem(numero, msg2);
-
-  // Mensagem 3 — 48 horas após a primeira
   await delay(28 * 60 * 60 * 1000);
-
-  const msg3 = await gerarMensagem(
-    `Você é uma atendente da Viraliza Cortes.
-O cliente "${primeiro}" ainda não assinou após usar o trial.
-Escreva UMA mensagem de oferta (máximo 5 linhas) apresentando o Plano Starter por R$29,90/mês com 35 cortes/mês.
-Inclua no final o link: ${CHECKOUT.starter}
-Mencione a garantia de 7 dias. Tom: caloroso, com leveza de urgência. Responda APENAS com o texto.`
-  );
-
+  const msg3 = await gerarMsgIA(`Crie UMA mensagem de oferta (máx 5 linhas) para "${n}". Apresente Starter R$29,90/mês com 55 cortes e garantia de 7 dias. Termine com: ${CHECKOUT.starter}. Urgência leve. Apenas o texto.`);
   await enviarMensagem(numero, msg3);
 }
 
-// Sequência 2: nunca usou os créditos (2 mensagens)
 async function sequenciaNuncaUsou(numero, nome) {
-  const primeiro = (nome || "").split(" ")[0] || "oi";
-
-  const msg1 = await gerarMensagem(
-    `Você é uma atendente da Viraliza Cortes.
-O cliente "${primeiro}" se cadastrou mas nunca usou os 10 créditos grátis.
-Escreva UMA mensagem curta (máximo 3 linhas) lembrando que os créditos estão esperando e explicando em 1 frase como é simples: cola o link do YouTube e a IA faz o resto.
-Inclua: viralizacortes.com.br. Tom: animado, sem pressão. Responda APENAS com o texto.`
-  );
-
+  const n = primeiroNome(nome);
+  const msg1 = await gerarMsgIA(`Crie UMA mensagem (máx 3 linhas) para "${n}" que se cadastrou mas nunca usou os 2 cortes grátis. Lembre que estão esperando e diga em 1 frase como é simples. Inclua: viralizacortes.com.br. Apenas o texto.`);
   await delay(1500);
   await enviarMensagem(numero, msg1);
-
-  // Mensagem 2 — 3 dias depois
   await delay(3 * 24 * 60 * 60 * 1000);
-
-  const msg2 = await gerarMensagem(
-    `Você é uma atendente da Viraliza Cortes.
-O cliente "${primeiro}" ainda não usou os créditos grátis após 5 dias.
-Escreva UMA mensagem curta (máximo 3 linhas) com urgência leve: os créditos vão vencer em breve. Mencione que dá pra ganhar renda extra postando cortes sem aparecer no vídeo.
-Inclua: viralizacortes.com.br. Responda APENAS com o texto.`
-  );
-
+  const msg2 = await gerarMsgIA(`Crie UMA mensagem (máx 3 linhas) de urgência leve para "${n}" que ainda não usou após 5 dias. Diga que os créditos vencem em breve, mencione renda extra. Inclua: viralizacortes.com.br. Apenas o texto.`);
   await enviarMensagem(numero, msg2);
 }
 
-// Sequência 3: usou poucos créditos (1 mensagem de reengajamento)
 async function sequenciaPoucoUso(numero, nome, creditosUsados) {
-  const primeiro = (nome || "").split(" ")[0] || "oi";
-
-  const msg = await gerarMensagem(
-    `Você é uma atendente da Viraliza Cortes.
-O cliente "${primeiro}" testou a plataforma e usou ${creditosUsados} dos 10 créditos grátis mas sumiu.
-Escreva UMA mensagem curta (máximo 3 linhas) reengajando: pergunte se teve alguma dificuldade, ofereça ajuda e lembre que ainda tem créditos para usar.
-Inclua: viralizacortes.com.br. Tom: caloroso, genuíno. Responda APENAS com o texto.`
-  );
-
+  const n = primeiroNome(nome);
+  const msg = await gerarMsgIA(`Crie UMA mensagem (máx 3 linhas) de reengajamento para "${n}" que usou ${creditosUsados} cortes grátis mas sumiu. Pergunte se teve dificuldade, ofereça ajuda, lembre dos créditos restantes. Inclua: viralizacortes.com.br. Apenas o texto.`);
   await delay(1500);
   await enviarMensagem(numero, msg);
 }
 
-// ─── Endpoints ────────────────────────────────────────────────────────────────
-
-// Disparado pelo backend quando usuário esgota créditos
 app.post("/disparar/trial-esgotado", async (req, res) => {
   const { phone, name } = req.body;
   const numero = normalizarNumero(phone);
   if (!numero) return res.status(400).json({ erro: "phone inválido" });
-  res.json({ ok: true, status: "sequência iniciada em background" });
-  sequenciaTrialEsgotado(numero, name).catch((e) =>
-    console.error("[trial-esgotado] erro:", e.message)
-  );
+  res.json({ ok: true, status: "sequência iniciada" });
+  sequenciaTrialEsgotado(numero, name).catch(e => console.error("[trial-esgotado]", e.message));
 });
 
-// Disparado para usuários que nunca usaram (2 dias após cadastro)
 app.post("/disparar/nunca-usou", async (req, res) => {
   const { phone, name } = req.body;
   const numero = normalizarNumero(phone);
   if (!numero) return res.status(400).json({ erro: "phone inválido" });
-  res.json({ ok: true, status: "sequência iniciada em background" });
-  sequenciaNuncaUsou(numero, name).catch((e) =>
-    console.error("[nunca-usou] erro:", e.message)
-  );
+  res.json({ ok: true, status: "sequência iniciada" });
+  sequenciaNuncaUsou(numero, name).catch(e => console.error("[nunca-usou]", e.message));
 });
 
-// Disparado para usuários com pouco uso (3+ dias sem logar)
 app.post("/disparar/reengajamento", async (req, res) => {
   const { phone, name, creditsUsed } = req.body;
   const numero = normalizarNumero(phone);
   if (!numero) return res.status(400).json({ erro: "phone inválido" });
-  res.json({ ok: true, status: "mensagem enviada em background" });
-  sequenciaPoucoUso(numero, name, creditsUsed || 0).catch((e) =>
-    console.error("[reengajamento] erro:", e.message)
-  );
+  res.json({ ok: true });
+  sequenciaPoucoUso(numero, name, creditsUsed || 0).catch(e => console.error("[reengajamento]", e.message));
 });
 
-// Disparo manual para lista (ex: os 8 usuários atuais)
 app.post("/disparar/lista", async (req, res) => {
   const { usuarios, tipo } = req.body;
-  // tipo: "trial-esgotado" | "nunca-usou" | "reengajamento"
-  if (!Array.isArray(usuarios) || !tipo)
-    return res.status(400).json({ erro: "Informe usuarios[] e tipo" });
-
+  if (!Array.isArray(usuarios) || !tipo) return res.status(400).json({ erro: "Informe usuarios[] e tipo" });
   res.json({ ok: true, total: usuarios.length, tipo });
-
   for (const u of usuarios) {
     const numero = normalizarNumero(u.phone);
     if (!numero) continue;
     try {
-      if (tipo === "trial-esgotado") await sequenciaTrialEsgotado(numero, u.name);
-      else if (tipo === "nunca-usou") await sequenciaNuncaUsou(numero, u.name);
+      if (tipo === "trial-esgotado")     await sequenciaTrialEsgotado(numero, u.name);
+      else if (tipo === "nunca-usou")    await sequenciaNuncaUsou(numero, u.name);
       else if (tipo === "reengajamento") await sequenciaPoucoUso(numero, u.name, u.creditsUsed);
-      await delay(10000 + Math.random() * 5000); // delay entre usuários
-    } catch (e) {
-      console.error(`[lista] erro em ${numero}:`, e.message);
-    }
+      await delay(10000 + Math.random() * 5000);
+    } catch (e) { console.error(`[lista] erro em ${numero}:`, e.message); }
   }
-  console.log(`[lista] Concluído — ${usuarios.length} usuários`);
 });
 
-// Resposta automática para quem mandar mensagem
+// ─── Webhook (respostas automáticas via Claude) ───────────────────────────────
 app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
   try {
@@ -206,40 +295,56 @@ app.post("/webhook", async (req, res) => {
     ) return;
 
     const numero = body.data.key.remoteJid;
-    const texto = body.data.message.conversation?.trim().toLowerCase();
+    const texto = body.data.message.conversation?.trim();
     if (!texto || numero.includes("@g.us")) return;
 
-    console.log(`[webhook] ${numero}: ${texto}`);
-
-    // Respostas automáticas simples
-    let resposta = null;
-
-    if (texto.match(/preço|plano|valor|quanto|custa/)) {
-      resposta = `Oi! Temos 4 planos 👇\n\n*Starter* — R$29,90/mês → 35 cortes\n*Pro* — R$49,90/mês → 60 cortes\n*Full* — R$99,90/mês → 120 cortes\n*Agência* — R$150/mês → 200 cortes\n\nTodos com 7 dias de garantia ✅\n\nQual se encaixa melhor pra você?`;
-    } else if (texto.match(/como funciona|o que é|o que faz/)) {
-      resposta = `É simples! 🎬\n\n1️⃣ Cole o link de qualquer vídeo do YouTube\n2️⃣ Nossa IA identifica os melhores momentos\n3️⃣ Receba os cortes prontos em 9:16 com legenda\n\nPronto para postar no TikTok, Reels e Shorts em menos de 3 minutos!\n\n👉 viralizacortes.com.br`;
-    } else if (texto.match(/starter|assinar|quero/)) {
-      resposta = `Boa escolha! 🚀\n\nAcesse aqui para assinar o Starter (R$29,90/mês):\n${CHECKOUT.starter}\n\nQualquer dúvida é só chamar!`;
-    } else {
-      resposta = `Oi! 👋 Obrigada por entrar em contato com o *Viraliza Cortes*!\n\nTransformamos vídeos do YouTube em cortes virais para TikTok, Reels e Shorts com IA 🎬✂️\n\nComece com 10 cortes grátis:\n👉 viralizacortes.com.br\n\nTem alguma dúvida? Pode perguntar!`;
-    }
-
-    if (resposta) {
-      await delay(1500 + resposta.length * 10);
-      await enviarMensagem(numero, resposta);
-    }
+    console.log(`[webhook] ${numero}: ${texto.slice(0, 80)}`);
+    await delay(1500 + texto.length * 15);
+    const resposta = await responderComIA(numero, texto);
+    await enviarMensagem(numero, resposta);
   } catch (err) {
     console.error("[webhook] erro:", err.message);
   }
 });
 
-app.get("/", (req, res) =>
-  res.json({ status: "online", bot: "Viraliza Cortes — Bot de Conversão" })
-);
+// ─── Dashboard ────────────────────────────────────────────────────────────────
+app.get("/dashboard", (req, res) => {
+  const rows = logEventos.map(e => `
+    <tr class="${e.ok ? "" : "err"}">
+      <td>${e.at.replace("T", " ").slice(0, 19)}</td>
+      <td><span class="badge">${e.tipo}</span></td>
+      <td>${e.numero}</td>
+      <td>${e.ok ? "✅" : "❌"}</td>
+    </tr>`).join("");
 
-app.get("/status", (req, res) =>
-  res.json({ status: "online", instance: EVOLUTION_INSTANCE })
-);
+  res.send(`<!DOCTYPE html><html lang="pt-BR">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bot Viraliza Cortes</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#0a0a0a;color:#e5e5e5;padding:24px}
+h1{color:#a855f7;margin-bottom:6px;font-size:1.4rem}
+.sub{color:#888;font-size:13px;margin-bottom:24px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:9px 12px;text-align:left;border-bottom:1px solid #1e1e1e}
+th{background:#141414;color:#a855f7;font-weight:600}
+tr.err td{color:#f87171}
+tr:hover td{background:#111}
+.badge{display:inline-block;padding:2px 8px;border-radius:9999px;font-size:11px;background:#1e1b4b;color:#a5b4fc}
+.empty{text-align:center;color:#444;padding:32px}
+</style></head>
+<body>
+<h1>🤖 Viraliza Cortes — Bot WhatsApp</h1>
+<p class="sub">Instância: ${EVOLUTION_INSTANCE} &nbsp;|&nbsp; Últimas ${logEventos.length} mensagens</p>
+<table>
+<thead><tr><th>Horário</th><th>Evento</th><th>Número</th><th>Status</th></tr></thead>
+<tbody>${rows || `<tr><td colspan="4" class="empty">Nenhuma mensagem enviada ainda</td></tr>`}</tbody>
+</table>
+</body></html>`);
+});
+
+app.get("/", (req, res) => res.json({ status: "online", bot: "Viraliza Cortes — Bot Lifecycle + IA" }));
+app.get("/health", (req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`[ViralizaCortes Bot] rodando na porta ${PORT}`));
+app.listen(PORT, () => console.log(`[ViralizaCortes Bot] porta ${PORT} — Claude ${process.env.CLAUDE_MODEL || "haiku"}`));
