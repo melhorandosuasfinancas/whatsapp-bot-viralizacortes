@@ -63,7 +63,7 @@ function systemPrompt() {
 
 Sobre a plataforma:
 - Usuário cola link do YouTube → IA encontra os melhores momentos → gera clips 9:16 com legendas em PT-BR gravadas no vídeo
-- Tudo no navegador, sem instalar nada. 2 cortes grátis para testar, sem cartão de crédito.
+- Tudo no navegador, sem instalar nada. 10 cortes grátis para testar, sem cartão de crédito.
 
 Planos:
 - Starter: R$29,90/mês → 55 cortes
@@ -110,7 +110,7 @@ async function responderComIA(numero, textoUsuario) {
 
 function msgBoasVindas(nome) {
   const n = primeiroNome(nome);
-  return `Oi ${n}! 🚀\nBem-vindo ao *Viraliza Cortes*!\n\nSeu acesso começa AGORA — 2 cortes grátis pra testar.\n▶️ Acesse: ${ACCESS_URL}\n\nCola um link do YouTube e me conta o resultado! 💚`;
+  return `Oi ${n}! 🚀\nBem-vindo ao *Viraliza Cortes*!\n\nSeu acesso começa AGORA — 10 cortes grátis pra testar.\n▶️ Acesse: ${ACCESS_URL}\n\nCola um link do YouTube e me conta o resultado! 💚`;
 }
 
 function msgTrialVencendo(nome) {
@@ -215,7 +215,7 @@ async function gerarMsgIA(prompt) {
 
 async function sequenciaTrialEsgotado(numero, nome) {
   const n = primeiroNome(nome);
-  const msg1 = await gerarMsgIA(`Crie UMA mensagem (máx 4 linhas) para "${n}" que acabou de usar todos os 2 cortes grátis. Reconheça de forma natural, elogie e pergunte se quer continuar. Sem preço, sem pressão. Apenas o texto.`);
+  const msg1 = await gerarMsgIA(`Crie UMA mensagem (máx 4 linhas) para "${n}" que acabou de usar todos os 10 cortes grátis. Reconheça de forma natural, elogie e pergunte se quer continuar. Sem preço, sem pressão. Apenas o texto.`);
   await delay(1500);
   await enviarMensagem(numero, msg1);
   await delay(20 * 60 * 60 * 1000);
@@ -228,7 +228,7 @@ async function sequenciaTrialEsgotado(numero, nome) {
 
 async function sequenciaNuncaUsou(numero, nome) {
   const n = primeiroNome(nome);
-  const msg1 = await gerarMsgIA(`Crie UMA mensagem (máx 3 linhas) para "${n}" que se cadastrou mas nunca usou os 2 cortes grátis. Lembre que estão esperando e diga em 1 frase como é simples. Inclua: viralizacortes.com.br. Apenas o texto.`);
+  const msg1 = await gerarMsgIA(`Crie UMA mensagem (máx 3 linhas) para "${n}" que se cadastrou mas nunca usou os 10 cortes grátis. Lembre que estão esperando e diga em 1 frase como é simples. Inclua: viralizacortes.com.br. Apenas o texto.`);
   await delay(1500);
   await enviarMensagem(numero, msg1);
   await delay(3 * 24 * 60 * 60 * 1000);
