@@ -131,6 +131,11 @@ function msgPlanoVencendo(nome, dataRenovacao) {
   return `Oi ${n}! 🔔\n\nSeu plano renova em *${dataRenovacao}*.\n\nQuer trocar de plano ou tem dúvida, é só me chamar! Tô aqui 💚\nVer planos: ${CHECKOUT.starter}`;
 }
 
+function msgOfertaPlanos(nome) {
+  const n = primeiroNome(nome);
+  return `Oi ${n}! 👋 Você se cadastrou no *Viraliza Cortes* e ainda tem 10 cortes grátis esperando por você!\n\nSe quiser ir além e criar mais cortes todo mês, temos planos a partir de:\n\n🎯 *Starter* — R$29,90/mês → 55 cortes\n🎯 *Pro* — R$49,90/mês → 80 cortes\n🎯 *Full* — R$99,90/mês → 140 cortes\n\nTodos com *garantia de 7 dias* e sem fidelidade 🔓\n\n▶️ Acesse agora: ${ACCESS_URL}\n\nQualquer dúvida é só me chamar aqui! 💚`;
+}
+
 // ─── Endpoints de Lifecycle ───────────────────────────────────────────────────
 
 app.post("/disparar/boas-vindas", async (req, res) => {
@@ -200,6 +205,43 @@ app.post("/disparar/plano-vencendo", async (req, res) => {
       console.error("[plano-vencendo] erro:", e.message);
     }
   });
+});
+
+app.post("/disparar/oferta", async (req, res) => {
+  const { phone, name } = req.body;
+  const numero = normalizarNumero(phone);
+  if (!numero) return res.status(400).json({ erro: "phone inválido" });
+  res.json({ ok: true });
+  setImmediate(async () => {
+    try {
+      await delay(1500);
+      await enviarMensagem(numero, msgOfertaPlanos(name));
+      registrarEvento("oferta", numero, true);
+      console.log(`[oferta] enviado para ${numero}`);
+    } catch (e) {
+      registrarEvento("oferta", numero, false);
+      console.error("[oferta] erro:", e.message);
+    }
+  });
+});
+
+app.post("/disparar/oferta-lista", async (req, res) => {
+  const { usuarios } = req.body;
+  if (!Array.isArray(usuarios)) return res.status(400).json({ erro: "Informe usuarios[]" });
+  res.json({ ok: true, total: usuarios.length });
+  for (const u of usuarios) {
+    const numero = normalizarNumero(u.phone);
+    if (!numero) continue;
+    try {
+      await delay(2000 + Math.random() * 3000);
+      await enviarMensagem(numero, msgOfertaPlanos(u.name));
+      registrarEvento("oferta", numero, true);
+      console.log(`[oferta-lista] enviado para ${numero}`);
+    } catch (e) {
+      registrarEvento("oferta", numero, false);
+      console.error(`[oferta-lista] erro em ${numero}:`, e.message);
+    }
+  }
 });
 
 // ─── Sequências IA (reengajamento) ───────────────────────────────────────────
