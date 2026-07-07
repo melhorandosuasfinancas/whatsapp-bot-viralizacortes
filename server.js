@@ -388,5 +388,69 @@ tr:hover td{background:#111}
 app.get("/", (req, res) => res.json({ status: "online", bot: "Viraliza Cortes — Bot Lifecycle + IA" }));
 app.get("/health", (req, res) => res.json({ ok: true }));
 
+// ─── Drip Diário — 1 contato por dia às 10h ──────────────────────────────────
+const jaContatadosDrip = new Set();
+
+async function dripDiario() {
+  const backendUrl = process.env.BACKEND_URL;
+  const adminSecret = process.env.ADMIN_SECRET;
+  if (!backendUrl || !adminSecret) {
+    console.log('[Drip] BACKEND_URL ou ADMIN_SECRET não configurado, pulando.');
+    return;
+  }
+  try {
+    const resp = await axios.get(
+      `${backendUrl}/api/auth/admin/users?limit=200`,
+      { headers: { 'x-admin-secret': adminSecret }, timeout: 10000 }
+    );
+    const candidatos = (resp.data.users || []).filter(u =>
+      u.whatsapp &&
+      u.plan === 'trial' &&
+      !u.active &&
+      !jaContatadosDrip.has(u.email) &&
+      !u.email.includes('teste') &&
+      !u.email.includes('test@') &&
+      !u.email.includes('viralizaia.com')
+    );
+    if (!candidatos.length) {
+      console.log('[Drip] Nenhum candidato pendente hoje.');
+      return;
+    }
+    // pega o mais antigo
+    candidatos.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    const u = candidatos[0];
+    const numero = normalizarNumero(u.whatsapp);
+    if (!numero) return;
+
+    const creditsLeft = (u.credits && u.credits.total) || 0;
+    if (creditsLeft === 0) {
+      await sequenciaTrialEsgotado(numero, u.name);
+      registrarEvento('drip-esgotado', numero, true);
+    } else {
+      await enviarMensagem(numero, msgOfertaPlanos(u.name));
+      registrarEvento('drip-oferta', numero, true);
+    }
+    jaContatadosDrip.add(u.email);
+    console.log(`[Drip] ✅ Enviado para ${u.email} | créditos restantes: ${creditsLeft}`);
+  } catch (e) {
+    console.error('[Drip] Erro:', e.message);
+  }
+}
+
+function agendarDrip() {
+  const agora = new Date();
+  const proximo = new Date(agora);
+  proximo.setHours(10, 0, 0, 0);
+  if (agora.getHours() >= 10) proximo.setDate(proximo.getDate() + 1);
+  const msAte = proximo - agora;
+  setTimeout(() => {
+    dripDiario();
+    setInterval(dripDiario, 24 * 60 * 60 * 1000);
+  }, msAte);
+  console.log(`[Drip] Próximo disparo em ${Math.round(msAte / 60000)} minutos (10h)`);
+}
+
+agendarDrip();
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`[ViralizaCortes Bot] porta ${PORT} — Claude ${process.env.CLAUDE_MODEL || "haiku"}`));
