@@ -452,5 +452,30 @@ function agendarDrip() {
 
 agendarDrip();
 
+// ─── Auto-reconexão WhatsApp ──────────────────────────────────────────────────
+// Verifica a cada 10 minutos se a instância caiu e reconecta automaticamente
+async function verificarConexao() {
+  try {
+    const resp = await axios.get(
+      `${EVOLUTION_URL}/instance/fetchInstances`,
+      { headers: { apikey: EVOLUTION_KEY }, timeout: 8000 }
+    );
+    const instancia = (resp.data || []).find(i => i.name === EVOLUTION_INSTANCE);
+    if (!instancia) return;
+    if (instancia.connectionStatus !== 'open') {
+      console.log(`[AutoReconect] Instância ${EVOLUTION_INSTANCE} está "${instancia.connectionStatus}" — reconectando...`);
+      await axios.get(
+        `${EVOLUTION_URL}/instance/connect/${EVOLUTION_INSTANCE}`,
+        { headers: { apikey: EVOLUTION_KEY }, timeout: 8000 }
+      );
+      console.log(`[AutoReconect] Solicitação de reconexão enviada.`);
+    }
+  } catch (e) {
+    console.error('[AutoReconect] Erro:', e.message);
+  }
+}
+
+setInterval(verificarConexao, 10 * 60 * 1000);
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`[ViralizaCortes Bot] porta ${PORT} — Claude ${process.env.CLAUDE_MODEL || "haiku"}`));
