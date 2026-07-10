@@ -110,7 +110,7 @@ async function responderComIA(numero, textoUsuario) {
 
 function msgBoasVindas(nome) {
   const n = primeiroNome(nome);
-  return `Oi ${n}! 🚀\nBem-vindo ao *Viraliza Cortes*!\n\nSeu acesso começa AGORA — 10 cortes grátis pra testar.\n▶️ Acesse: ${ACCESS_URL}\n\nCola um link do YouTube e me conta o resultado! 💚`;
+  return `Oi ${n}! 🚀\nBem-vindo ao *Viraliza Cortes*!\n\nSeu acesso começa AGORA — 10 cortes grátis pra testar.\n▶️ Acesse: ${ACCESS_URL}\n\n💡 *Salva esse número* para não perder nossas novidades e não cair no spam!\n\nCola um link do YouTube e me conta o resultado! 💚`;
 }
 
 function msgTrialVencendo(nome) {
